@@ -80,28 +80,13 @@ class PinDriver:
         self._drive()
 
 
-# Cocotb runs every test in this module inside a single simulation, so the
-# clock and the reference generator are started once and shared.  Stopping the
-# reference is a state change on the driver, not a task teardown.
-_PINS = None
-
-
-def _setup(dut):
-    global _PINS
-    if _PINS is None:
-        _PINS = PinDriver(dut)
-        cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_NS, unit="ns").start())
-        cocotb.start_soon(_drive_reference(dut, _PINS))
-    _PINS.ref_enabled = True
-    return _PINS
-
-
 async def _drive_reference(dut, pins):
-    """Reference clock at clk / 10 on ui_in[1]; freezes when disabled."""
+    """Reference clock at clk / 10 on ui_in[1]; returns once disabled."""
     while True:
         await ClockCycles(dut.clk, REF_HALF_PERIOD_CYCLES)
-        if pins.ref_enabled:
-            pins.toggle_ref_clk()
+        if not pins.ref_enabled:
+            return
+        pins.toggle_ref_clk()
 
 
 def _pin(handle, index):
@@ -152,8 +137,15 @@ async def _read_debug_byte(dut, pins, selector):
 
 
 async def _start_locked_pll(dut):
-    """Bring the DUT out of reset with a live reference and wait for lock."""
-    pins = _setup(dut)
+    """Bring the DUT out of reset with a live reference and wait for lock.
+
+    Cocotb tears down the tasks a test started when that test ends, so every
+    test starts its own clock and reference generator.
+    """
+    pins = PinDriver(dut)
+    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_NS, unit="ns").start())
+    cocotb.start_soon(_drive_reference(dut, pins))
+
     await _reset(dut, pins)
     pins.set_enable(1)
 
