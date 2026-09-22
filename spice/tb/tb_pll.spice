@@ -1,0 +1,64 @@
+* Closed-loop lock test for the analog charge-pump PLL.
+*
+* Drives a 25 MHz reference and checks that the divided VCO output settles
+* onto it, i.e. the VCO reaches 8 x 25 MHz = 200 MHz.
+*
+* Run with devices.spice -> devices_generic.spice to verify loop behaviour
+* on a stock ngspice, or -> devices_ihp.spice for device-accurate signoff.
+
+.include "devices.spice"
+.include "cells.spice"
+.include "vco.spice"
+.include "blocks.spice"
+.include "pll_top.spice"
+
+.param VDD=1.8
+.param FREF=25e6
+.param TREF='1/FREF'
+.param CLOAD=150f
+
+vvdd vdd 0 'VDD'
+vref ref 0 pulse(0 'VDD' 1n 100p 100p 'TREF/2' 'TREF')
+
+* Release the divider reset after 20 ns so the loop starts from a known phase.
+vclr clrb 0 pulse(0 'VDD' 20n 100p 100p 1 2)
+
+xpll ref vctrl vco_out div_out clrb vdd 0 pll_top cl='CLOAD'
+
+* .ic values are held during the operating-point solve and released into the
+* transient.  vctrl starts near mid-rail so the ring is already oscillating
+* and the loop only has to pull it the rest of the way; forcing one ring
+* node low breaks the (unstable) symmetric DC solution so the ring starts.
+* Note these are .ic without `uic` on the tran line: the bias network still
+* gets a proper operating point, which it needs to converge.
+.ic v(vctrl)=0.75
+.ic v(xpll.xvco.r1)=0
+
+.control
+set noaskquit
+set nobreak
+tran 50p 5u
+
+echo "--- control voltage settling ---"
+meas tran vc_1us find v(vctrl) at=1u
+meas tran vc_3us find v(vctrl) at=3u
+meas tran vc_5us find v(vctrl) at=4.99u
+
+echo "--- locked frequencies (measured over the last microsecond) ---"
+meas tran tda when v(div_out)=0.9 rise=80
+meas tran tdb when v(div_out)=0.9 rise=100
+let f_div = 20 / (tdb - tda)
+meas tran tva when v(vco_out)=0.9 rise=700
+meas tran tvb when v(vco_out)=0.9 rise=740
+let f_vco = 40 / (tvb - tva)
+let ratio = f_vco / f_div
+* .param symbols are not visible inside .control, so the reference is repeated.
+let err_ppm = (f_div - 25e6) / 25e6 * 1e6
+
+echo "f_div_Hz     = $&f_div"
+echo "f_vco_Hz     = $&f_vco"
+echo "divide_ratio = $&ratio"
+echo "f_div_err_ppm= $&err_ppm"
+.endc
+
+.end

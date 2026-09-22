@@ -1,88 +1,102 @@
-![](../../workflows/gds/badge.svg) ![](../../workflows/docs/badge.svg) ![](../../workflows/test/badge.svg) ![](../../workflows/fpga/badge.svg)
+![](../../workflows/gds/badge.svg) ![](../../workflows/docs/badge.svg)
 
-# All-Digital PLL (ADPLL) — Tiny Tapeout project
+# Analog Charge-Pump PLL — Tiny Tapeout (IHP SG13G2)
 
-A fully synthesizable all-digital phase-locked loop in Verilog, packaged as a
-[Tiny Tapeout](https://tinytapeout.com) project on top of the
-[ttihp-verilog-template](https://github.com/TinyTapeout/ttihp-verilog-template)
-(IHP SG13G2).
+A transistor-level analog PLL: phase-frequency detector, current-steering
+charge pump, on-chip RC loop filter, current-starved ring VCO and a ÷8
+feedback divider. 25 MHz reference in, 200 MHz out.
 
-The core is a 24-bit NCO steered by a PI loop filter. Because the
-frequency-control word is a ratio of the control clock, the design is
-clock-rate independent: with `ref_clk = clk / 10` it locks `pll_clk` to
-`4 × ref_clk = 0.4 × clk`.
+No accumulator, no digital loop filter — the control voltage is a real voltage
+on a real MIM capacitor. See [docs/info.md](docs/info.md) for the datasheet.
 
-> This is a **digital/NCO PLL**, not a transistor-level charge-pump PLL.
-> `pll_clk` is a usable clock-like output, but its edges are quantized to the
-> control clock. A low-jitter analog/RF PLL needs custom analog cells and
-> cannot be synthesized by Yosys.
+> An earlier standard-cell **digital** ADPLL version of this project is kept at
+> the tag [`digital-adpll`](../../tree/digital-adpll). It was replaced because
+> it was not an analog design.
 
-See [docs/info.md](docs/info.md) for the datasheet: theory of operation, the
-full pin map, the debug-bus encoding and the bring-up procedure.
+## Status
 
-## Pin map
+| Item | State |
+| ---- | ----- |
+| Architecture + transistor-level netlists | **done** — `spice/` |
+| PFD / flip-flop / divider logic verified | **done** — see below |
+| Closed-loop lock verified | **done, generic devices** |
+| Loop filter sized from measured Kvco | **done** — `scripts/loop_filter.py` |
+| Device-accurate sim with IHP PSP103 | **blocked** — see [Simulation](#device-accurate-simulation) |
+| Layout: `gds/` + `lef/` | **not started** — required before submission |
 
-| Pin        | Name      | Direction | Function                              |
-| ---------- | --------- | --------- | ------------------------------------- |
-| `ui[0]`    | ENABLE    | in        | Loop enable; low holds the NCO reset  |
-| `ui[1]`    | REF_CLK   | in        | Reference clock, nominally `clk / 10` |
-| `ui[4:2]`  | DBG_SEL   | in        | Selects the debug byte on `uio`       |
-| `uo[0]`    | PLL_CLK   | out       | NCO output, `4 × REF_CLK` when locked |
-| `uo[1]`    | LOCKED    | out       | Lock detect                           |
-| `uo[2]`    | REF_ECHO  | out       | `REF_CLK` re-registered on `clk`      |
-| `uo[3]`    | ERR_SIGN  | out       | Sign bit of the phase error           |
-| `uio[7:0]` | DBG[7:0]  | out       | Debug byte (bus is output-only)       |
+**This cannot be submitted to Tiny Tapeout yet.** An analog project is
+hardened by `TinyTapeout/tt-gds-action/custom_gds`, which does not synthesise
+anything: it packages a GDS and a LEF that you draw yourself in Magic or
+KLayout. Until `gds/tt_um_hyphen133_pll.gds` and
+`lef/tt_um_hyphen133_pll.lef` exist, the `gds` workflow will fail — that is
+expected at this stage, not a regression.
 
-## Layout
+## Simulation results
+
+All numbers below are from generic level-1 devices (see
+[Device-accurate simulation](#device-accurate-simulation)), so they validate
+topology, polarity and loop dynamics, **not** silicon-accurate frequencies.
 
 ```
-info.yaml                       Tiny Tapeout project metadata and pinout
-docs/info.md                    datasheet source
-src/tt_um_hyphen133_adpll.v     Tiny Tapeout top level (pin mapping, debug mux)
-src/adpll.v                     the ADPLL core
-src/config.json                 LibreLane config used by the GDS action
-test/                           cocotb suite driven through the tt_um_* pins
-tb/tb_adpll.sv                  core-level self-checking Icarus testbench
-scripts/model_adpll.py          dependency-free cycle model and smoke test
-synth/synth.ys                  generic Yosys synthesis of the TT top level
-openlane/                       standalone Sky130 hardening of the bare core
-.github/workflows/              TT GDS, docs, test and FPGA actions
+$ make logic
+flip-flop clear -> Q          3.5 uV at 2 ns, 1.800 V at 100 ns
+PFD, ref leads fb by 4 ns     UP 4.115 ns, DN 0.113 ns
+divide ratio                  7.9996
+
+$ make pll
+vctrl at 1 / 3 / 5 us         0.9191 / 0.9193 / 0.9210 V
+f_vco                         200.014 MHz   (target 8 x 25 MHz)
+divide ratio                  8.0035
 ```
 
-`src/` is the single source of truth for the RTL — Tiny Tapeout requires it
-there, and the local Yosys/OpenLane flows read from the same files.
+The narrow DN pulse when locked is the deliberate anti-dead-zone overlap, not
+an error.
 
-## Run
+## Layout of the repository
+
+```
+spice/cells.spice        inverter, NAND2/3, transmission gate, D and T flops
+spice/vco.spice          bias generator, starved inverter, 5-stage ring
+spice/blocks.spice       PFD, charge pump, bias, loop filter, divide-by-8
+spice/pll_top.spice      the closed loop
+spice/devices_generic.spice  level-1 stand-ins for the IHP primitives
+spice/devices_ihp.spice      the real PSP103 corner libs
+spice/tb/                testbenches
+scripts/loop_filter.py   loop filter sizing from Icp, Kvco, N, fn, zeta
+src/project.v            empty black box; TT needs the port list only
+info.yaml                TT metadata, pinout, analog pin count
+gds/, lef/               hand-drawn layout goes here (not yet present)
+```
+
+## Running the simulations
 
 ```bash
-make model        # cycle model, pure Python
-make tt-test      # Tiny Tapeout cocotb suite  (needs iverilog + cocotb)
-make sim          # core-level SV testbench    (needs iverilog)
-make lint         # Yosys elaboration check    (needs yosys)
-make synth        # generic gate mapping       (needs yosys)
+make generic     # select the level-1 stand-in devices
+make logic       # PFD, flip-flop clear, divider
+make vco         # VCO tuning curve
+make pll         # closed-loop lock
+make filter      # re-derive R, C1, C2 from a measured Kvco
 ```
 
-Install the cocotb dependencies once with `pip install -r test/requirements.txt`.
+Needs only a stock `ngspice`.
 
-Gate-level simulation, after the GDS action has hardened the design: copy
-`results/final/verilog/gl/tt_um_hyphen133_adpll.v` to
-`test/gate_level_netlist.v`, then `make tt-test-gl`.
+### Device-accurate simulation
 
-The Tiny Tapeout GDS is built by `.github/workflows/gds.yaml` on every push —
-no local PDK needed. The `openlane/` directory is a separate, optional Sky130
-hardening of the bare `adpll` core:
+`make ihp IHP_PDK_ROOT=/path/to/IHP-Open-PDK` switches the same testbenches to
+the real models, but it will not run on a stock ngspice:
 
-```bash
-make layout                                      # needs LibreLane + sky130A
-make layout-docker LIBRELANE=/path/to/librelane  # containerized toolchain
-```
+- The IHP SG13G2 models are **PSP103 Verilog-A**. They need an ngspice built
+  with OSDI support plus compiled `psp103.osdi` / `r3_cmc.osdi` binaries
+  (`.spiceinit` in the PDK expects them under `libs.tech/ngspice/osdi/`).
+- Those `.osdi` files are **not** shipped in the PDK repo or its releases. They
+  are built from `libs.tech/verilog-a/psp103/` with OpenVAF, and `.osdi` is a
+  compiled shared object, so it must match your architecture.
+- A stock ngspice reports `Unknown model type psp103va` and stops.
 
-## Tiny Tapeout
-
-To publish the results page, enable GitHub Pages for this repository
-(Settings → Pages → Source: GitHub Actions). Submission instructions live at
-[tinytapeout.com](https://tinytapeout.com) and the HDL docs at
-[tinytapeout.com/hdl](https://tinytapeout.com/hdl/).
+The easiest route is a prebuilt environment such as IIC-OSIC-TOOLS, which
+ships ngspice, OpenVAF and the IHP PDK already wired together. Once it runs,
+re-extract Kvco with `make vco`, feed it to `make filter`, and update the
+`loop_filter` defaults in `spice/blocks.spice`.
 
 ## License
 

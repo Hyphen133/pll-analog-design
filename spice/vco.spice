@@ -1,0 +1,47 @@
+* Current-starved ring oscillator VCO for the analog PLL (IHP SG13G2, 1.8 V).
+*
+* A control voltage sets a tail current; that current is mirrored into the
+* header PMOS and footer NMOS of every ring stage, so the per-stage delay is
+* C*dV/I and the oscillation frequency rises with vctrl.
+*
+* Five stages keeps the ring comfortably above the target 160 MHz while
+* leaving headroom at the slow corner.
+
+* ------------------------------------------------------- V-to-I converter
+* vctrl drives a long-channel NMOS for a gentle, monotonic Kvco.  The
+* resulting current is mirrored to vbp (PMOS gate bias) and vbn (NMOS gate
+* bias) for the starved inverter stages.
+.subckt vco_bias vctrl vbp vbn vdd vss wctl=4u lctl=0.5u wm=4u lm=0.4u
+xmctl vbp vctrl vss vss sg13_lv_nmos w=wctl l=lctl
+xmp0  vbp vbp  vdd vdd sg13_lv_pmos w='2*wm' l=lm
+xmp1  vbn vbp  vdd vdd sg13_lv_pmos w='2*wm' l=lm
+xmn0  vbn vbn  vss vss sg13_lv_nmos w=wm    l=lm
+.ends vco_bias
+
+* ------------------------------------------------------ starved inverter
+* Header and footer devices are deliberately wider than the switching pair
+* so the stage delay tracks the bias current rather than the device sizes.
+* cl adds explicit load to each stage.  Leave it at 0 for silicon, where the
+* device and wiring parasitics dominate; the generic-model benches raise it
+* to bring the ring down to the target frequency.
+.subckt starved_inv a y vbp vbn vdd vss wn=1u wp=2.2u wh=6u lg=0.13u cl=0
+xmph vtop vbp vdd  vdd sg13_lv_pmos w=wh l='2*lg'
+xmp  y    a   vtop vdd sg13_lv_pmos w=wp l=lg
+xmn  y    a   vbot vss sg13_lv_nmos w=wn l=lg
+xmnf vbot vbn vss  vss sg13_lv_nmos w='wh/2' l='2*lg'
+cload y vss 'cl+1e-18'
+.ends starved_inv
+
+* ------------------------------------------------------- 5-stage ring VCO
+* vco_out is buffered so ring loading stays independent of the load.
+.subckt vco vctrl vco_out vdd vss cl=0
+xbias vctrl vbp vbn vdd vss vco_bias
+
+xs1 r5 r1 vbp vbn vdd vss starved_inv cl=cl
+xs2 r1 r2 vbp vbn vdd vss starved_inv cl=cl
+xs3 r2 r3 vbp vbn vdd vss starved_inv cl=cl
+xs4 r3 r4 vbp vbn vdd vss starved_inv cl=cl
+xs5 r4 r5 vbp vbn vdd vss starved_inv cl=cl
+
+xbuf r5 vco_out vdd vss buf2
+.ends vco

@@ -1,0 +1,33 @@
+* VCO tuning curve: sweep vctrl, measure the oscillation frequency.
+* The Kvco extracted here sets the loop-filter component values.
+
+.include "devices.spice"
+.include "cells.spice"
+.include "vco.spice"
+
+.param VDD=1.8
+
+vvdd vdd 0 'VDD'
+vctl vctrl 0 0.9
+
+xdut vctrl vco_out vdd 0 vco
+cload vco_out 0 10f
+
+.control
+set noaskquit
+set nobreak
+echo "vctrl_V freq_Hz"
+let vc = 0.5
+while vc <= 1.81
+  alter vctl dc = $&vc
+* Settle the ring first, then measure over 20 periods for averaging.
+  tran 20p 260n 60n
+  meas tran t1 when v(vco_out)=0.9 rise=3
+  meas tran t2 when v(vco_out)=0.9 rise=23
+  let fosc = 20 / (t2 - t1)
+  echo "$&vc $&fosc"
+  let vc = vc + 0.1
+end
+.endc
+
+.end

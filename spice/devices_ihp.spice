@@ -1,0 +1,11 @@
+* IHP SG13G2 primitives, typical corner.
+*
+* Requires an ngspice built with OSDI support and the PSP103 / r3_cmc OSDI
+* binaries loaded (see docs/simulation.md).  A stock ngspice reports
+* "Unknown model type psp103va" and stops.
+*
+* pdk/ is a symlink to $IHP_PDK_ROOT/ihp-sg13g2/libs.tech/ngspice/models.
+
+.lib "pdk/cornerMOSlv.lib" mos_tt
+.lib "pdk/cornerRES.lib"   res_typ
+.lib "pdk/cornerCAP.lib"   cap_typ

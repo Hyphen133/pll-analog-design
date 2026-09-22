@@ -1,0 +1,75 @@
+* Loop blocks for the analog charge-pump PLL (IHP SG13G2, 1.8 V).
+*
+* Signal chain:  ref -> PFD -> charge pump -> loop filter -> VCO -> divider
+*                 ^                                                    |
+*                 +----------------------- fb -------------------------+
+*
+* Nominal operating point (see docs/info.md for the derivation):
+*   f_ref = 25 MHz, N = 8, f_out = 200 MHz, I_cp = 5 uA
+*   loop natural frequency 1.5 MHz, damping 0.9
+
+* ------------------------------------------------------------------- PFD
+* Tri-state phase-frequency detector: two edge-triggered flops with D tied
+* high, cleared once both outputs are asserted.  The four inverters in the
+* clear path stretch the reset pulse so both current sources overlap
+* briefly every cycle, which removes the charge-pump dead zone.
+.subckt pfd ref fb up upb dn dnb vdd vss
+xdup vdd up upb ref clrb vdd vss dff
+xddn vdd dn dnb fb  clrb vdd vss dff
+xrst up dn rstn vdd vss nand2
+xd1 rstn d1   vdd vss inv
+xd2 d1   d2   vdd vss inv
+xd3 d2   d3   vdd vss inv
+xd4 d3   clrb vdd vss inv
+.ends pfd
+
+* ----------------------------------------------------------- charge pump
+* Current-steering pump.  ibias is a diode-connected NMOS leg; that current
+* is mirrored directly into the sink branch and via a PMOS diode into the
+* source branch, so up and down currents track each other over process.
+* Long channels keep the output impedance high and the mismatch low.
+.subckt charge_pump upb dn vctrl ibias vdd vss wm=4u lm=1u wsw=2u lsw=0.2u
+* NMOS mirror: reference leg, sink leg, and the leg feeding the PMOS diode
+xmn_ref ibias  ibias vss vss sg13_lv_nmos w=wm l=lm
+xmn_snk nsink  ibias vss vss sg13_lv_nmos w=wm l=lm
+xmn_leg pdiode ibias vss vss sg13_lv_nmos w=wm l=lm
+* PMOS mirror for the source branch
+xmp_dio pdiode pdiode vdd vdd sg13_lv_pmos w='2*wm' l=lm
+xmp_src nsrc   pdiode vdd vdd sg13_lv_pmos w='2*wm' l=lm
+* Steering switches: PMOS pulls up on upb=0, NMOS pulls down on dn=1
+xmsw_up vctrl upb nsrc  vdd sg13_lv_pmos w='2*wsw' l=lsw
+xmsw_dn vctrl dn  nsink vss sg13_lv_nmos w=wsw     l=lsw
+.ends charge_pump
+
+* ------------------------------------------------------- bias generator
+* Sets the charge-pump reference current from an on-chip high-sheet
+* resistor.  I = (VDD - Vgs) / R, about 5 uA at the typical corner.
+* The node is exposed so an external source on ua[1] can override it.
+.subckt cp_bias ibias vdd vss wr=1u lr=176u
+xr vdd ibias vss rhigh w=wr l=lr
+.ends cp_bias
+
+* ----------------------------------------------------------- loop filter
+* Second-order passive filter: series R + C1 sets the stabilising zero,
+* shunt C2 suppresses the charge-pump ripple.
+* Values from scripts/loop_filter.py at Icp = 5.3 uA, Kvco = 500 MHz/V,
+* N = 8, fn = 1.5 MHz, zeta = 0.9.  Kvco is the measured ring gain, so
+* re-run that script and update these once PSP103 simulation is available.
+*   R  = 51.2 kOhm -> rhigh, 1360 ohm/sq, 37.7 squares
+*   C1 = 3.73 pF   -> cap_cmim, 1.5 fF/um^2, 49.9 x 49.9 um
+*   C2 = 373 fF    -> cap_cmim, 15.8 x 15.8 um
+.subckt loop_filter vctrl vss wr=1u lr=37.7u wc1=49.9u lc1=49.9u wc2=15.8u lc2=15.8u
+xr  vctrl nz vss rhigh w=wr l=lr
+xc1 nz    vss cap_cmim w=wc1 l=lc1
+xc2 vctrl vss cap_cmim w=wc2 l=lc2
+.ends loop_filter
+
+* ---------------------------------------------------------- divide-by-8
+* Three toggle flops.  clrb holds the chain reset so the loop starts from a
+* known phase.
+.subckt div8 clk dout clrb vdd vss
+xt1 q1 q1b clk clrb vdd vss tff
+xt2 q2 q2b q1  clrb vdd vss tff
+xt3 q3 q3b q2  clrb vdd vss tff
+xbuf q3 dout vdd vss inv
+.ends div8

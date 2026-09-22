@@ -1,20 +1,18 @@
 # Tiny Tapeout
 .DS_Store
 .idea
-*.vcd
-*.fst
-*.fst.hier
 runs
 tt_submission
-src/user_config.json
-src/config_merged.json
-test/sim_build
-test/__pycache__/
-test/results.xml
-test/gate_level_netlist.v
 
-# Local ADPLL flows
-.venv/
-build/
-openlane/runs/
+# SPICE
+# devices.spice and pdk are symlinks created by the Makefile for the local
+# toolchain; devices_generic.spice and devices_ihp.spice are tracked.
+spice/devices.spice
+spice/pdk
+*.raw
+*.vcd
+*.fst
+
+# Python
 __pycache__/
+.venv/

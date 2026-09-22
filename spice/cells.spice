@@ -1,0 +1,76 @@
+* CMOS cell library for the analog PLL, built from IHP SG13G2 LV devices.
+* All cells are static CMOS so the blocks behave correctly down to DC.
+*
+* Device convention: sg13_lv_nmos / sg13_lv_pmos, ports d g s b.
+
+.param LMIN=0.13u
+.param WN=1.0u
+.param WP=2.2u
+
+* ---------------------------------------------------------------- inverter
+.subckt inv a y vdd vss wn='WN' wp='WP' lg='LMIN'
+xmp y a vdd vdd sg13_lv_pmos w=wp l=lg
+xmn y a vss vss sg13_lv_nmos w=wn l=lg
+.ends inv
+
+* ------------------------------------------------------------ transmission
+.subckt tgate a b c cb vdd vss wn='WN' wp='WP' lg='LMIN'
+xmn a c b vss sg13_lv_nmos w=wn l=lg
+xmp a cb b vdd sg13_lv_pmos w=wp l=lg
+.ends tgate
+
+* ------------------------------------------------------------------- nand2
+* Series NMOS stack is widened to keep the pull-down strength balanced.
+.subckt nand2 a b y vdd vss wn='2*WN' wp='WP' lg='LMIN'
+xmp1 y a vdd vdd sg13_lv_pmos w=wp l=lg
+xmp2 y b vdd vdd sg13_lv_pmos w=wp l=lg
+xmn1 y a n1 vss sg13_lv_nmos w=wn l=lg
+xmn2 n1 b vss vss sg13_lv_nmos w=wn l=lg
+.ends nand2
+
+* ------------------------------------------------------------------- nand3
+.subckt nand3 a b c y vdd vss wn='3*WN' wp='WP' lg='LMIN'
+xmp1 y a vdd vdd sg13_lv_pmos w=wp l=lg
+xmp2 y b vdd vdd sg13_lv_pmos w=wp l=lg
+xmp3 y c vdd vdd sg13_lv_pmos w=wp l=lg
+xmn1 y a n1 vss sg13_lv_nmos w=wn l=lg
+xmn2 n1 b n2 vss sg13_lv_nmos w=wn l=lg
+xmn3 n2 c vss vss sg13_lv_nmos w=wn l=lg
+.ends nand3
+
+* --------------------------------------------------- positive-edge D flop
+* Classic six-NAND edge-triggered flip-flop (74LS74 topology) with an
+* active-low asynchronous clear.  Chosen over a transmission-gate
+* master/slave because clear drives Q to 0, which is what the PFD needs.
+*
+*   n1 = nand2(n4, n2)
+*   n2 = nand3(n1, clk, clrb)
+*   n3 = nand3(n2, clk, n4)
+*   n4 = nand3(n3, d, clrb)
+*   q  = nand2(n2, qb)
+*   qb = nand3(q, n3, clrb)
+*
+* clrb = 0 forces n2 = n4 = 1 and qb = 1, hence q = 0.
+.subckt dff d q qb clk clrb vdd vss
+xg1 n4 n2 n1 vdd vss nand2
+xg2 n1 clk clrb n2 vdd vss nand3
+xg3 n2 clk n4 n3 vdd vss nand3
+xg4 n3 d clrb n4 vdd vss nand3
+xg5 n2 qb q vdd vss nand2
+xg6 q n3 clrb qb vdd vss nand3
+.ends dff
+
+* ------------------------------------------------------------ toggle flop
+* Divide-by-two: D flop with qb wrapped back onto d.
+* qb feeds straight back to d: any buffering in that path must preserve the
+* inversion, so the flop's own qb output is wired directly to its d input.
+.subckt tff q qb clk clrb vdd vss
+xff qb q qb clk clrb vdd vss dff
+.ends tff
+
+* --------------------------------------------------------- output buffers
+* Two-stage tapered buffer for driving pads and scope loads.
+.subckt buf2 a y vdd vss
+xi1 a n1 vdd vss inv wn='2*WN' wp='2*WP'
+xi2 n1 y vdd vss inv wn='8*WN' wp='8*WP'
+.ends buf2

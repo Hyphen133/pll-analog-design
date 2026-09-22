@@ -1,0 +1,65 @@
+* Logic verification of the PFD, the flip-flop clear polarity and the
+* divider, using generic level-1 MOSFETs.
+*
+* This testbench deliberately does NOT use the IHP models.  Its job is to
+* prove the topology and the polarities are right; device-accurate results
+* come from the tb_*.spice benches that pull in the PSP103 corner libs.
+* devices.spice must point at devices_generic.spice for this bench; the
+* level-1 stand-ins shadow the PDK subcircuit names so the design netlists
+* are included unmodified.
+
+.include "devices.spice"
+.include "cells.spice"
+.include "blocks.spice"
+
+.param VDD=1.8
+.param TREF=40n
+.param TSKEW=4n
+
+vvdd vdd 0 'VDD'
+
+* ref leads fb by TSKEW, so the PFD should emit a wide UP and a narrow DN.
+vref ref 0 pulse(0 'VDD' 1n 100p 100p 'TREF/2' 'TREF')
+vfb  fb  0 pulse(0 'VDD' '1n+TSKEW' 100p 100p 'TREF/2' 'TREF')
+
+* Clear is released after 5 ns so the reset behaviour is exercised too.
+vclr clrb 0 pulse(0 'VDD' 5n 100p 100p 1 2)
+
+xpfd ref fb up upb dn dnb vdd 0 pfd
+
+* Divider fed from a 200 MHz source: dout must come out at 25 MHz.
+vdiv dclk 0 pulse(0 'VDD' 0 100p 100p 2.5n 5n)
+xdiv dclk dout clrb vdd 0 div8
+
+* Bare flop to check that clear drives q low and that d=1 clocks through.
+xff vdd qff qffb ref clrb vdd 0 dff
+
+.control
+set noaskquit
+set nobreak
+tran 20p 400n
+
+echo "--- flip-flop clear polarity ---"
+meas tran q_at_2n find v(qff) at=2n
+meas tran q_at_100n find v(qff) at=100n
+
+echo "--- PFD pulse widths (ref leads fb by 4 ns) ---"
+meas tran tup_r when v(up)=0.9 rise=4
+meas tran tup_f when v(up)=0.9 fall=4
+meas tran tdn_r when v(dn)=0.9 rise=4
+meas tran tdn_f when v(dn)=0.9 fall=4
+let w_up = (tup_f - tup_r) * 1e9
+let w_dn = (tdn_f - tdn_r) * 1e9
+echo "up_width_ns  = $&w_up"
+echo "dn_width_ns  = $&w_dn"
+
+echo "--- divide ratio ---"
+meas tran td1 when v(dout)=0.9 rise=2
+meas tran td2 when v(dout)=0.9 rise=6
+let tdiv = (td2 - td1) / 4
+let ratio = tdiv / 5n
+echo "div_period_ns = $&tdiv"
+echo "divide_ratio  = $&ratio"
+.endc
+
+.end

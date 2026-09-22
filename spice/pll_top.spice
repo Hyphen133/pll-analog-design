@@ -1,0 +1,18 @@
+* Analog charge-pump PLL, top level.
+*
+*   ref --->[PFD]--->[charge pump]--->[loop filter]--->[VCO]---+---> vco_out
+*             ^                                                |
+*             +---------------[divide by 8]<-------------------+
+*
+* clrb holds the divider reset; vctrl is brought out so the loop filter node
+* can be probed (and, on silicon, driven) through an analog pad.
+* cl is the per-stage VCO load; see vco.spice.
+
+.subckt pll_top ref vctrl vco_out div_out clrb vdd vss cl=0
+xbias ibias vdd vss cp_bias
+xpfd  ref div_out up upb dn dnb vdd vss pfd
+xcp   upb dn vctrl ibias vdd vss charge_pump
+xlf   vctrl vss loop_filter
+xvco  vctrl vco_out vdd vss vco cl=cl
+xdiv  vco_out div_out clrb vdd vss div8
+.ends pll_top
